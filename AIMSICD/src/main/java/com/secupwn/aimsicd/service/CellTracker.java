@@ -30,6 +30,7 @@ import android.telephony.gsm.GsmCellLocation;
 import com.secupwn.aimsicd.AndroidIMSICatcherDetector;
 import com.secupwn.aimsicd.BuildConfig;
 import com.secupwn.aimsicd.R;
+import com.secupwn.aimsicd.defender.DefenderAgent;
 import com.secupwn.aimsicd.enums.Status;
 import com.secupwn.aimsicd.ui.activities.MainActivity;
 import com.secupwn.aimsicd.utils.Cell;
@@ -119,6 +120,7 @@ public class CellTracker implements SharedPreferences.OnSharedPreferenceChangeLi
     private boolean vibrateEnabled;
     private int vibrateMinThreatLevel;
     private LinkedBlockingQueue<NeighboringCellInfo> neighboringCellBlockingQueue;
+    private long lastDefenderFeedMs;
 
     private final RealmHelper dbHelper;
     private Context context;
@@ -182,6 +184,54 @@ public class CellTracker implements SharedPreferences.OnSharedPreferenceChangeLi
             Helpers.msgShort(context, context.getString(R.string.stopped_monitoring_cell_information));
         }
         setNotification();
+    }
+
+    /**
+     * Called by the SMS detection path when a silent/type-0 SMS is spotted.
+     * Feeds the defender agent so it can fuse the signal with cell data.
+     */
+    public void setSilentSmsDetected(boolean detected) {
+        this.typeZeroSmsDetected = detected;
+        setNotification();
+        feedDefenderAgent();
+    }
+
+    /**
+     * Push the latest detection flags + cell snapshot to the defender agent.
+     * Throttled to ~1 feed per 5 s unless a detection flag is active, so the
+     * LTE spoof detector still sees RSRP/RAT movement without spamming.
+     */
+    private void feedDefenderAgent() {
+        try {
+            long now = System.currentTimeMillis();
+            boolean urgent = changedLAC || emptyNeighborCellsList || cellIdNotInOpenDb
+                    || femtoDetected || typeZeroSmsDetected;
+            if (!urgent && now - lastDefenderFeedMs < 5000L) {
+                return;
+            }
+            lastDefenderFeedMs = now;
+
+            List<CellInfo> infos = null;
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR2 && tm != null) {
+                    infos = tm.getAllCellInfo();
+                }
+            } catch (Exception ignored) {
+            }
+            int netType = TelephonyManager.NETWORK_TYPE_UNKNOWN;
+            try {
+                if (tm != null) {
+                    netType = tm.getNetworkType();
+                }
+            } catch (Exception ignored) {
+            }
+            DefenderAgent.getInstance(context).onCellTrackerUpdate(
+                    device != null ? device.cell : null, infos, netType,
+                    changedLAC, emptyNeighborCellsList, cellIdNotInOpenDb,
+                    femtoDetected, typeZeroSmsDetected);
+        } catch (Exception e) {
+            log.debug("feedDefenderAgent failed: {}", e.getMessage());
+        }
     }
 
     public void stop() {
@@ -473,6 +523,7 @@ public class CellTracker implements SharedPreferences.OnSharedPreferenceChangeLi
             tinydb.putBoolean(ncListVariableByType, false);
         }
         setNotification();
+        feedDefenderAgent();
     }
 
     /**
@@ -591,6 +642,7 @@ public class CellTracker implements SharedPreferences.OnSharedPreferenceChangeLi
                 }
         }
         setNotification();
+        feedDefenderAgent();
     }
 
     /**
@@ -796,6 +848,8 @@ public class CellTracker implements SharedPreferences.OnSharedPreferenceChangeLi
             // Send it to signal tracker
             signalStrengthTracker.registerSignalStrength(device.cell.getCellId(), device.getSignalDBm());
             //signalStrengthTracker.isMysterious(device.cell.getCid(), device.getSignalDBm());
+            // Feed LTE spoof detector with fresh RSRP (throttled inside).
+            feedDefenderAgent();
         }
 
         // In DB:   No,In,Ou,IO,Do
@@ -1119,6 +1173,7 @@ public class CellTracker implements SharedPreferences.OnSharedPreferenceChangeLi
                 Helpers.msgShort(context, context.getString(R.string.alert_femtocell_tracking_detected));
                 femtoDetected = true;
                 setNotification();
+                feedDefenderAgent();
                 //toggleRadio();
             } else {
                 femtoDetected = false;
