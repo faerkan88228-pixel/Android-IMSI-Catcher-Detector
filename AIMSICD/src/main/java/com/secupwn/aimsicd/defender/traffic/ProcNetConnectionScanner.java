@@ -151,7 +151,8 @@ public final class ProcNetConnectionScanner {
         return new String[]{v6 ? parseIpv6(ipHex) : parseIpv4(ipHex), String.valueOf(port)};
     }
 
-    private static String parseIpv4(String hex) {
+    // Package-visible for unit tests.
+    static String parseIpv4(String hex) {
         // Little-endian hex, e.g. 0100007F -> 127.0.0.1
         try {
             long v = Long.parseLong(hex, 16);
@@ -162,7 +163,8 @@ public final class ProcNetConnectionScanner {
         }
     }
 
-    private static String parseIpv6(String hex) {
+    // Package-visible for unit tests.
+    static String parseIpv6(String hex) {
         try {
             // 32 hex chars, 4x 32-bit words little-endian each.
             StringBuilder sb = new StringBuilder();
@@ -185,7 +187,8 @@ public final class ProcNetConnectionScanner {
         }
     }
 
-    private static String tcpStateName(String hex) {
+    // Package-visible for unit tests.
+    static String tcpStateName(String hex) {
         String s = TCP_STATES.get(hex.toUpperCase());
         return s == null ? hex : s;
     }

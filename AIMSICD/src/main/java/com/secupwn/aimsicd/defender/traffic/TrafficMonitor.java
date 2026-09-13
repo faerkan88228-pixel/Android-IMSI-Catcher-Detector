@@ -78,6 +78,7 @@ public class TrafficMonitor {
     private static final int SUSTAINED_SAMPLES = 5;            // 10 s
     private static final long UID_BURST_BPS = 128 * 1024;
     private static final long ANOMALY_COOLDOWN_MS = 60000L;
+    private static final int UID_MAP_REFRESH_POLLS = 30; // re-scan installed apps ~every 60 s
 
     private final Context appContext;
     private final PackageManager pm;
@@ -99,6 +100,7 @@ public class TrafficMonitor {
     private long lastPollTime;
     private int sustainedExfilSamples;
     private long lastAnomalyTime;
+    private int pollCount;
     private volatile boolean catcherSuspected; // boosts sensitivity
 
     public TrafficMonitor(Context context) {
@@ -203,6 +205,13 @@ public class TrafficMonitor {
         lastMobileTx = mobileTx;
         lastPollTime = now;
 
+        // Periodically pick up newly installed/updated apps (getInstalledApplications
+        // is too heavy to run on every 2 s poll, but fine about once a minute).
+        pollCount++;
+        if (pollCount % UID_MAP_REFRESH_POLLS == 0) {
+            refreshUidMap();
+        }
+
         List<TrafficSnapshot.UidRate> talkers = computeUidRates(dtSec);
 
         TrafficSnapshot snap = new TrafficSnapshot(now, totalRx, totalTx, mobileRx, mobileTx,
@@ -261,8 +270,7 @@ public class TrafficMonitor {
 
     private List<TrafficSnapshot.UidRate> computeUidRates(double dtSec) {
         List<TrafficSnapshot.UidRate> rates = new ArrayList<TrafficSnapshot.UidRate>();
-        // Refresh the UID map occasionally (new installs) - cheap enough every poll
-        // on typical devices (<500 apps); guard with try/catch.
+        // NB: runs on the single poll thread, same thread that refreshes uidToPackage.
         for (Map.Entry<Integer, String> e : uidToPackage.entrySet()) {
             int uid = e.getKey();
             long rx = TrafficStats.getUidRxBytes(uid);

@@ -7,6 +7,8 @@ package com.secupwn.aimsicd.defender;
 
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.os.Handler;
+import android.os.Looper;
 import android.preference.PreferenceManager;
 import android.telephony.CellInfo;
 
@@ -55,6 +57,7 @@ public class DefenderAgent implements TrafficMonitor.TrafficListener {
     private final DefenderLogStore logStore;
     private final CopyOnWriteArrayList<DefenderListener> listeners =
             new CopyOnWriteArrayList<DefenderListener>();
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
 
     private volatile ThreatLevel currentLevel = ThreatLevel.NONE;
     private volatile boolean started;
@@ -406,6 +409,18 @@ public class DefenderAgent implements TrafficMonitor.TrafficListener {
     /** Also mirror HIGH+ incidents into the legacy Realm EventLog table. */
     private void mirrorToEventLog(final DefenderEvent event) {
         if (event.getThreatLevel().ordinal() < ThreatLevel.HIGH.ordinal()) {
+            return;
+        }
+        // RealmHelper.toEventLog() uses executeTransactionAsync, which needs a
+        // Looper thread. Traffic anomalies arrive on a bare executor thread, so
+        // hop to the main thread first; cell updates are already on it.
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            mainHandler.post(new Runnable() {
+                @Override
+                public void run() {
+                    mirrorToEventLog(event);
+                }
+            });
             return;
         }
         try {

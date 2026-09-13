@@ -108,6 +108,41 @@ Integration points: `AimsicdService` (owns the agent lifecycle),
 = 160), `preferences.xml` (Defender category), `AndroidManifest.xml` (INTERNET,
 ACCESS_WIFI_STATE, `DefenderVpnService` with `BIND_VPN_SERVICE`).
 
+## Tests
+
+Pure-JVM unit tests (run by `./gradlew build check` on CI, no device needed):
+
+```
+AIMSICD/src/test/java/com/secupwn/aimsicd/defender/
+├── DefenderScoreTest.java          # score→level boundaries, spoof-result clamping
+├── firewall/FirewallRuleTest.java  # CIDR matching, normalization, describe()
+├── firewall/FirewallBogonTest.java # local-range guard incl. 172.200.x.x regression
+└── traffic/
+    ├── TrafficSnapshotTest.java    # rate/total formatting, talker ordering
+    └── ProcNetParsingTest.java     # /proc/net IPv4/IPv6/state parsers
+```
+
+`LteChannelSpoofDetector.observe()` is intentionally not unit-tested: it emits
+an slf4j log on the suspect path, and the slf4j-android binding delegates to
+`android.util.Log`, which throws on a bare JVM. Cover it with instrumented
+tests or Robolectric if you extend the heuristics.
+
+## Hardening notes
+
+* Firewall lockdown is re-applied first on every iptables rebuild, so later
+  rule edits can't silently drop it. Lockdown on non-root devices is reported
+  honestly ("limited without root") since only DENY rules + the VPN sinkhole
+  apply there.
+* The local-range guard uses numeric CIDR checks (`172.16.0.0/12`), not string
+  prefixes — naive prefix matching would misclassify public space such as
+  `172.200.x.x`.
+* Realm EventLog mirroring hops to the main thread: traffic anomalies arrive on
+  a Looper-less executor thread where `executeTransactionAsync` would throw.
+* The UID→app map refreshes ~once a minute so newly installed apps show up in
+  top talkers; all fragment UI callbacks are guarded against detach races.
+* The panel shows a consent hint when DENY rules exist but the VPN sinkhole
+  isn't running yet on a non-root device.
+
 ## Limitations (read before relying on this)
 
 * Heuristics are probabilistic: strong-signal / TAC / PCI anomalies can also

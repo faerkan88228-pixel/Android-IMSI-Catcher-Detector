@@ -67,12 +67,30 @@ public class DefenderFragment extends Fragment implements DefenderListener,
         @Override
         public void run() {
             try {
-                refreshLiveTraffic();
+                if (isAdded()) {
+                    refreshLiveTraffic();
+                }
             } catch (Exception ignored) {
             }
             ui.postDelayed(this, UI_TICK_MS);
         }
     };
+
+    /**
+     * Post UI work guarded by attachment: defender/traffic callbacks arrive on
+     * background threads and can race fragment detach otherwise.
+     */
+    private void postUi(final Runnable r) {
+        ui.post(new Runnable() {
+            @Override
+            public void run() {
+                if (!isAdded()) {
+                    return;
+                }
+                r.run();
+            }
+        });
+    }
 
     // Views
     private TextView threatView;
@@ -251,7 +269,7 @@ public class DefenderFragment extends Fragment implements DefenderListener,
     @Override
     public void onThreatLevelChanged(final DefenderAgent.ThreatLevel newLevel,
                                      final DefenderEvent cause) {
-        ui.post(new Runnable() {
+        postUi(new Runnable() {
             @Override
             public void run() {
                 refreshThreat();
@@ -262,7 +280,7 @@ public class DefenderFragment extends Fragment implements DefenderListener,
 
     @Override
     public void onDefenderEvent(final DefenderEvent event) {
-        ui.post(new Runnable() {
+        postUi(new Runnable() {
             @Override
             public void run() {
                 refreshEvents();
@@ -273,7 +291,7 @@ public class DefenderFragment extends Fragment implements DefenderListener,
 
     @Override
     public void onDefenderStateChanged() {
-        ui.post(new Runnable() {
+        postUi(new Runnable() {
             @Override
             public void run() {
                 refreshAll();
@@ -287,7 +305,7 @@ public class DefenderFragment extends Fragment implements DefenderListener,
 
     @Override
     public void onRulesChanged(final List<FirewallRule> rules) {
-        ui.post(new Runnable() {
+        postUi(new Runnable() {
             @Override
             public void run() {
                 rulesAdapter.setRules(rules);
@@ -298,7 +316,7 @@ public class DefenderFragment extends Fragment implements DefenderListener,
 
     @Override
     public void onFirewallStateChanged(final boolean enabled, final boolean rooted) {
-        ui.post(new Runnable() {
+        postUi(new Runnable() {
             @Override
             public void run() {
                 refreshSwitches();
@@ -313,7 +331,7 @@ public class DefenderFragment extends Fragment implements DefenderListener,
 
     @Override
     public void onTrafficSnapshot(final TrafficSnapshot snapshot) {
-        ui.post(new Runnable() {
+        postUi(new Runnable() {
             @Override
             public void run() {
                 renderSnapshot(snapshot);
@@ -462,7 +480,13 @@ public class DefenderFragment extends Fragment implements DefenderListener,
                 ? "VPN sinkhole ON (" + DefenderVpnService.getRouteCount() + " routes, "
                 + DefenderVpnService.getDroppedPackets() + " pkts dropped)"
                 : "VPN sinkhole OFF";
-        vpnView.setText(backend + "\n" + vpn);
+        StringBuilder line = new StringBuilder(backend).append('\n').append(vpn);
+        if (!rooted && !DefenderVpnService.isRunning() && agent.getFirewall().isEnabled()
+                && !agent.getFirewall().getEnabledDenyIpRules().isEmpty()) {
+            // DENY rules exist but nothing enforces them yet: tell the user why.
+            line.append('\n').append(getString(R.string.defender_vpn_consent_hint));
+        }
+        vpnView.setText(line.toString());
         btnVpn.setText(DefenderVpnService.isRunning()
                 ? R.string.defender_vpn_stop : R.string.defender_vpn_start);
     }
@@ -517,7 +541,7 @@ public class DefenderFragment extends Fragment implements DefenderListener,
     }
 
     private void showAddRuleDialog() {
-        if (agent == null) {
+        if (agent == null || getActivity() == null) {
             return;
         }
         final EditText input = new EditText(getActivity());
@@ -546,6 +570,9 @@ public class DefenderFragment extends Fragment implements DefenderListener,
     }
 
     private void toggleVpn() {
+        if (getActivity() == null) {
+            return;
+        }
         if (DefenderVpnService.isRunning()) {
             Intent stop = new Intent(getActivity(), DefenderVpnService.class);
             stop.setAction(DefenderVpnService.ACTION_STOP);
@@ -568,13 +595,18 @@ public class DefenderFragment extends Fragment implements DefenderListener,
     }
 
     private void startVpnService() {
+        if (getActivity() == null) {
+            return;
+        }
         Intent start = new Intent(getActivity(), DefenderVpnService.class);
         start.setAction(DefenderVpnService.ACTION_START);
         getActivity().startService(start);
         ui.postDelayed(new Runnable() {
             @Override
             public void run() {
-                refreshVpnLine();
+                if (isAdded()) {
+                    refreshVpnLine();
+                }
             }
         }, 800);
     }

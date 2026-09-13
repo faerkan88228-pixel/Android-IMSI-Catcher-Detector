@@ -107,7 +107,6 @@ public class LteChannelSpoofDetector {
     private static final long TAC_JUMP_WINDOW_MS = 120000L; // 2 min
     private static final int RSRP_JUMP_DB = 18;             // sudden overpower jump
     private static final int RSRP_CATCHER_STRONG = -65;     // abnormally strong indoor?
-    private static final long DOWNGRADE_WINDOW_MS = 90000L; // LTE->GSM inside window
 
     private final LinkedList<LteObservation> history = new LinkedList<LteObservation>();
     private final Map<Integer, Integer> pciToCi = new HashMap<Integer, Integer>();

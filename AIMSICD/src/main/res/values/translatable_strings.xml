@@ -451,6 +451,8 @@
     <string name="defender_notif_title">Defender %1$s</string>
     <string name="defender_notif_radio_title">Defender: radio reset needed</string>
     <string name="defender_data_lockdown_on">Defender: data lockdown ON. Clear it from the Defender panel when safe.</string>
+    <string name="defender_lockdown_limited">Defender: lockdown limited without root — DENY rules still enforced. Turn VPN ON for non-root blocking.</string>
+    <string name="defender_vpn_consent_hint">Tap VPN ON and accept the system dialog to enable non-root blocking.</string>
     <string name="defender_lockdown_cleared">Defender: lockdown cleared.</string>
     <string name="defender_radio_reset_done">Defender: radio re-attached (airplane pulse).</string>
     <string name="defender_radio_reset_manual">Defender: please toggle Airplane Mode once to drop the suspicious cell (needs root for auto).</string>

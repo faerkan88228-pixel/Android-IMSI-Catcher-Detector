@@ -158,16 +158,9 @@ public class FirewallManager {
         }
         this.lockdown = on;
         log.info("Firewall lockdown {} ({})", on ? "ON" : "OFF", reason);
-        if (on && isRooted()) {
-            // Drop everything new on OUTPUT except DNS-less? Keep it simple:
-            // user clears lockdown from the Defender UI.
-            runIptables("-I " + CHAIN + " 1 -m state --state NEW -j DROP");
-        } else {
-            applyRules();
-        }
-        if (!on) {
-            applyRules();
-        }
+        // Re-materialize everything; applyIptables() re-inserts the lockdown
+        // rule first when lockdown is on, so later rule edits can't drop it.
+        applyRules();
         pushVpnRules();
         notifyState();
     }
@@ -316,6 +309,11 @@ public class FirewallManager {
     private void applyIptables() {
         ensureChain();
         runIptables("-F " + CHAIN);
+        if (lockdown) {
+            // Lockdown first (chain was just flushed, so this lands at position 1):
+            // drop new connections until the user clears lockdown from the UI.
+            runIptables("-A " + CHAIN + " -m state --state NEW -j DROP");
+        }
         int applied = 0;
         for (FirewallRule r : rules) {
             if (!r.isEnabled() || r.getAction() != FirewallRule.Action.DENY) {
@@ -443,13 +441,27 @@ public class FirewallManager {
         return slash < 0 ? cidr : cidr.substring(0, slash);
     }
 
-    /** Never auto-block loopback / LAN / carrier-local ranges. */
-    private static boolean isBogonOrLocal(String ipOrCidr) {
-        String ip = stripPrefix(ipOrCidr);
-        return ip.startsWith("127.") || ip.startsWith("10.") || ip.startsWith("192.168.")
-                || ip.startsWith("169.254.") || ip.equals("0.0.0.0")
-                || ip.startsWith("172.16.") || ip.startsWith("172.17.") || ip.startsWith("172.18.")
-                || ip.startsWith("172.19.") || ip.startsWith("172.2") || ip.startsWith("172.30.")
-                || ip.startsWith("172.31.") || ip.contains(":");
+    /** Never auto-block loopback / LAN / carrier-local ranges. Package-visible for unit tests. */
+    static boolean isBogonOrLocal(String ipOrCidr) {
+        String ip = stripPrefix(ipOrCidr).trim();
+        if (ip.contains(":")) {
+            return true; // IPv6: the v4-only enforcement path can't express these anyway
+        }
+        try {
+            long addr = FirewallRule.ipv4ToLong(ip);
+            return inCidr(addr, "127.0.0.0/8") || inCidr(addr, "10.0.0.0/8")
+                    || inCidr(addr, "172.16.0.0/12") || inCidr(addr, "192.168.0.0/16")
+                    || inCidr(addr, "169.254.0.0/16") || inCidr(addr, "0.0.0.0/8");
+        } catch (Exception e) {
+            return true; // unparseable: never auto-block garbage
+        }
+    }
+
+    private static boolean inCidr(long addr, String cidr) {
+        String[] parts = cidr.split("/");
+        long net = FirewallRule.ipv4ToLong(parts[0]);
+        int prefix = Integer.parseInt(parts[1]);
+        long mask = prefix == 0 ? 0 : (0xFFFFFFFFL << (32 - prefix)) & 0xFFFFFFFFL;
+        return (net & mask) == (addr & mask);
     }
 }

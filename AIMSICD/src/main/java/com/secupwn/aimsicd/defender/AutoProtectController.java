@@ -146,6 +146,11 @@ public class AutoProtectController {
 
     private void lockdownData(boolean on, DefenderEvent cause) {
         String reason = cause == null ? "manual" : cause.getTitle();
+        boolean rooted = false;
+        try {
+            rooted = firewall.isRooted();
+        } catch (Exception ignored) {
+        }
         try {
             firewall.setLockdown(on, reason);
         } catch (Exception e) {
@@ -153,8 +158,14 @@ public class AutoProtectController {
         }
         // Also try to switch mobile data off at the OS level (root/system only).
         setMobileDataEnabled(!on, reason);
-        Helpers.msgLong(appContext, appContext.getString(R.string.defender_data_lockdown_on));
-        log.info("DATA LOCKDOWN {} ({})", on ? "ON" : "OFF", reason);
+        if (on && !rooted) {
+            // No iptables without root: DENY rules + VPN sinkhole still apply,
+            // but be honest that this is not a full data cut-off.
+            Helpers.msgLong(appContext, appContext.getString(R.string.defender_lockdown_limited));
+        } else {
+            Helpers.msgLong(appContext, appContext.getString(R.string.defender_data_lockdown_on));
+        }
+        log.info("DATA LOCKDOWN {} (rooted={} {})", on ? "ON" : "OFF", rooted, reason);
     }
 
     /**
