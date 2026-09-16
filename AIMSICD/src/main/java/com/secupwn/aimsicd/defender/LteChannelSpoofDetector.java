@@ -179,6 +179,7 @@ public class LteChannelSpoofDetector {
         lastLte = null;
         lastLteTime = 0;
         lastRat = Integer.MAX_VALUE;
+        lastRatChangeTime = 0;
     }
 
     public synchronized LteObservation getLastLte() {
@@ -192,7 +193,7 @@ public class LteChannelSpoofDetector {
     private int checkDowngrade(int networkType, List<String> reasons) {
         long now = System.currentTimeMillis();
         int delta = 0;
-        if (lastRat != Integer.MAX_VALUE && isLte(lastRat) && isGsmFamily(networkType)) {
+        if (lastRat != Integer.MAX_VALUE && isLte(lastRat) && is2gFamily(networkType)) {
             long gap = lastRatChangeTime == 0 ? 0 : now - lastRatChangeTime;
             // Downgrade itself is suspicious; faster downgrade = more suspicious.
             delta = 35;
@@ -218,11 +219,17 @@ public class LteChannelSpoofDetector {
             dt = 0;
         }
         if (dt <= TAC_JUMP_WINDOW_MS) {
-            // Same PCI but new TAC, or TAC flip-flop, is extra suspicious.
-            int delta = obs.pci == lastLte.pci ? 35 : 25;
+            // Same PCI but new TAC is extra suspicious; an A->B->A flip-flop
+            // (catcher relaying between two areas) scores the max.
+            // (history holds committed obs; [size-1] is lastLte.)
+            boolean samePci = obs.pci == lastLte.pci;
+            boolean flipFlop = history.size() >= 2
+                    && history.get(history.size() - 2).tac == obs.tac;
+            int delta = flipFlop ? 40 : (samePci ? 35 : 25);
             reasons.add("TAC jump " + lastLte.tac + " -> " + obs.tac
                     + " in " + (dt / 1000) + "s"
-                    + (obs.pci == lastLte.pci ? " (same PCI, likely fake tracking area)" : ""));
+                    + (flipFlop ? " (flip-flop A->B->A, likely fake tracking area)"
+                            : (samePci ? " (same PCI, likely fake tracking area)" : "")));
             return delta;
         }
         reasons.add("TAC changed " + lastLte.tac + " -> " + obs.tac + " (informational)");
@@ -462,7 +469,8 @@ public class LteChannelSpoofDetector {
         return networkType == TelephonyManager.NETWORK_TYPE_LTE;
     }
 
-    private static boolean isGsmFamily(int networkType) {
+    /** 2G-family RATs a catcher classically forces a downgrade into. */
+    private static boolean is2gFamily(int networkType) {
         return networkType == TelephonyManager.NETWORK_TYPE_GPRS
                 || networkType == TelephonyManager.NETWORK_TYPE_EDGE
                 || networkType == TelephonyManager.NETWORK_TYPE_GSM

@@ -11,7 +11,7 @@ Open it from the navigation drawer: **Defender Agent**.
 | Module | Purpose |
 |---|---|
 | `DefenderAgent` | Fuses all signals into one threat level (`NONE/LOW/MEDIUM/HIGH/CRITICAL`), raises incidents, drives auto-protect + firewall. |
-| `LteChannelSpoofDetector` | LTE-specific tells: TAC jumps, PCI confusion/duplicates, RSRP overpower jumps, new/unexpected EARFCN, Timing-Advance anomalies, LTE→2G downgrade. |
+| `LteChannelSpoofDetector` | LTE-specific tells: TAC jumps / A→B→A flip-flop, PCI confusion/duplicates, RSRP overpower jumps, new/unexpected EARFCN, Timing-Advance anomalies, LTE→2G downgrade. |
 | `AutoProtectController` | Escalation ladder: loud notification + vibrate → data lockdown → radio reset (airplane pulse). All steps best-effort, logged, cooldown-guarded. |
 | `firewall.FirewallManager` | Rule CRUD + auto rule adder. Root backend = `iptables` chain `AIMSICD_DEF` (IP/CIDR + per-UID). Non-root backend = VPN sinkhole. |
 | `firewall.DefenderVpnService` | Non-root blocking: routes only DENY CIDRs into a TUN and drops them. Normal traffic bypasses the VPN untouched. |
