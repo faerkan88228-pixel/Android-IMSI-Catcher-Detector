@@ -46,6 +46,8 @@ public class DefenderVpnService extends VpnService {
     private ParcelFileDescriptor tun;
     private Thread readerThread;
     private volatile boolean wantRun;
+    /** Bumped on every closeTun(): lets a replaced reader exit itself. */
+    private volatile long tunGeneration;
 
     public static boolean isRunning() {
         return RUNNING.get();
@@ -113,7 +115,8 @@ public class DefenderVpnService extends VpnService {
             Builder b = new Builder();
             b.setSession("AIMSICD Defender Firewall");
             b.addAddress("10.8.77.1", 24);
-            b.addDnsServer("8.8.8.8");
+            // NB: no addDnsServer — a sinkhole forwards nothing, so it must
+            // not advertise itself as a resolver.
             b.setMtu(1400);
             int routes = 0;
             for (FirewallRule r : denyRules) {
@@ -176,9 +179,13 @@ public class DefenderVpnService extends VpnService {
 
     private void closeTun() {
         wantRun = false;
-        if (readerThread != null) {
-            readerThread.interrupt();
-            readerThread = null;
+        tunGeneration++;
+        Thread old = readerThread;
+        readerThread = null;
+        if (old != null) {
+            // NB: interrupt alone can't unblock FileInputStream.read(); the
+            // fd close below is what releases the reader.
+            old.interrupt();
         }
         if (tun != null) {
             try {
@@ -186,6 +193,14 @@ public class DefenderVpnService extends VpnService {
             } catch (Exception ignored) {
             }
             tun = null;
+        }
+        if (old != null) {
+            try {
+                // Wait briefly so TUN rebuilds (rule updates) don't leak a
+                // reader thread spinning on a closed fd.
+                old.join(2000);
+            } catch (InterruptedException ignored) {
+            }
         }
     }
 
@@ -195,12 +210,15 @@ public class DefenderVpnService extends VpnService {
      */
     private void startReader() {
         final ParcelFileDescriptor fd = tun;
+        final long myGeneration = tunGeneration;
         readerThread = new Thread(new Runnable() {
             @Override
             public void run() {
                 FileInputStream in = new FileInputStream(fd.getFileDescriptor());
-                byte[] buf = new byte[1500];
-                while (wantRun) {
+                byte[] buf = new byte[2048]; // headroom above the 1400 MTU
+                // Exit if replaced by a newer TUN generation even when the
+                // closeTun() join timed out and wantRun flipped back to true.
+                while (wantRun && tunGeneration == myGeneration) {
                     try {
                         int n = in.read(buf);
                         if (n <= 0) {

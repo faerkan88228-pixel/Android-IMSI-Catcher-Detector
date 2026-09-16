@@ -22,6 +22,10 @@ import com.secupwn.aimsicd.utils.CMDProcessor;
 import com.secupwn.aimsicd.utils.CommandResult;
 import com.secupwn.aimsicd.utils.Helpers;
 
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadFactory;
+
 import lombok.extern.slf4j.Slf4j;
 
 /**
@@ -55,8 +59,23 @@ public class AutoProtectController {
     private final Context appContext;
     private final FirewallManager firewall;
 
-    private long lastAggressiveAction;
-    private long lastNotification;
+    /**
+     * Aggressive actions (su shell-outs, sleeps, iptables) must never run on
+     * the caller thread: onThreat() is invoked from the main thread on the
+     * cell-update path. Single daemon thread, process-lifetime, no shutdown
+     * needed (controller is a singleton owned by DefenderAgent).
+     */
+    private final ExecutorService actions = Executors.newSingleThreadExecutor(new ThreadFactory() {
+        @Override
+        public Thread newThread(Runnable r) {
+            Thread t = new Thread(r, "DefenderActions");
+            t.setDaemon(true);
+            return t;
+        }
+    });
+
+    private volatile long lastAggressiveAction;
+    private volatile long lastNotification;
 
     public AutoProtectController(Context context, FirewallManager firewall) {
         this.appContext = context.getApplicationContext();
@@ -91,53 +110,68 @@ public class AutoProtectController {
             return;
         }
 
+        if (level.ordinal() < DefenderAgent.ThreatLevel.HIGH.ordinal()) {
+            // MEDIUM = notify-only tier (already done above).
+            return;
+        }
         long now = System.currentTimeMillis();
-        if (level.ordinal() >= DefenderAgent.ThreatLevel.HIGH.ordinal()
-                && now - lastAggressiveAction < ACTION_COOLDOWN_MS) {
+        if (now - lastAggressiveAction < ACTION_COOLDOWN_MS) {
             log.debug("Auto-protect cooldown active; skipping aggressive actions.");
             return;
         }
-
-        switch (level) {
-            case MEDIUM:
-                // Notify-only tier (already done). Optionally tighten firewall later.
-                break;
-            case HIGH:
-                lastAggressiveAction = now;
-                if (prefs().getBoolean(PREF_DATA_LOCKDOWN, true)) {
-                    lockdownData(true, event);
+        // Claim the cooldown slot on the caller thread, then do the blocking
+        // work (su, iptables, sleeps) in the background: this method runs on
+        // the main thread for cell-update incidents.
+        lastAggressiveAction = now;
+        final DefenderEvent cause = event;
+        final DefenderAgent.ThreatLevel finalLevel = level;
+        actions.execute(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    if (prefs().getBoolean(PREF_DATA_LOCKDOWN, true)) {
+                        lockdownData(true, cause);
+                    }
+                    if (finalLevel == DefenderAgent.ThreatLevel.CRITICAL) {
+                        if (prefs().getBoolean(PREF_RADIO_RESET, false)) {
+                            radioResetPulse(cause);
+                        } else {
+                            log.info("Radio reset disabled in prefs; skipping.");
+                        }
+                    }
+                } catch (Exception e) {
+                    log.warn("Auto-protect action failed: {}", e.getMessage());
                 }
-                break;
-            case CRITICAL:
-                lastAggressiveAction = now;
-                if (prefs().getBoolean(PREF_DATA_LOCKDOWN, true)) {
-                    lockdownData(true, event);
-                }
-                if (prefs().getBoolean(PREF_RADIO_RESET, false)) {
-                    radioResetPulse(event);
-                } else {
-                    log.info("Radio reset disabled in prefs; skipping.");
-                }
-                break;
-            default:
-                break;
-        }
+            }
+        });
     }
 
     /** Manually clear a data lockdown (UI button / threat cleared). */
-    public void clearLockdown(String reason) {
-        try {
-            firewall.setLockdown(false, reason);
-        } catch (Exception e) {
-            log.debug("clearLockdown firewall failed: {}", e.getMessage());
-        }
-        setMobileDataEnabled(true, reason);
-        Helpers.msgShort(appContext, appContext.getString(R.string.defender_lockdown_cleared));
+    public void clearLockdown(final String reason) {
+        // Called from the UI thread; shell-outs go to the background.
+        // (Toaster hops to main itself, so the toast is safe from here.)
+        actions.execute(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    firewall.setLockdown(false, reason);
+                } catch (Exception e) {
+                    log.debug("clearLockdown firewall failed: {}", e.getMessage());
+                }
+                setMobileDataEnabled(true, reason);
+                Helpers.msgShort(appContext, appContext.getString(R.string.defender_lockdown_cleared));
+            }
+        });
     }
 
-    /** Manual "reset radio now" button. */
+    /** Manual "reset radio now" button (2.5 s pulse runs off the UI thread). */
     public void manualRadioReset() {
-        radioResetPulse(null);
+        actions.execute(new Runnable() {
+            @Override
+            public void run() {
+                radioResetPulse(null);
+            }
+        });
     }
 
     // ------------------------------------------------------------------
@@ -158,7 +192,9 @@ public class AutoProtectController {
         }
         // Also try to switch mobile data off at the OS level (root/system only).
         setMobileDataEnabled(!on, reason);
-        if (on && !rooted) {
+        if (!on) {
+            Helpers.msgLong(appContext, appContext.getString(R.string.defender_lockdown_cleared));
+        } else if (!rooted) {
             // No iptables without root: DENY rules + VPN sinkhole still apply,
             // but be honest that this is not a full data cut-off.
             Helpers.msgLong(appContext, appContext.getString(R.string.defender_lockdown_limited));
