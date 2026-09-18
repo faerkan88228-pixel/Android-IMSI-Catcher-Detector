@@ -63,6 +63,29 @@ public class AimsicdService extends InjectionService {
     public static final String GPS_REMEMBER_CHOICE = "remember choice";
     SharedPreferences gpsPreferences;
 
+    /** The single running instance of the service, or {@code null} when stopped. */
+    private static AimsicdService sInstance;
+
+    /**
+     * @return true when the service is currently running.
+     */
+    public static boolean isRunning() {
+        return sInstance != null;
+    }
+
+    /**
+     * Exposes the {@link SimSwapper} of the running service so that static receivers
+     * (e.g. {@code SimSwapAlarmReceiver}) can forward SIM-state broadcasts to it.
+     *
+     * @return the active SimSwapper, or {@code null} when the service is stopped.
+     */
+    public static SimSwapper getSimSwapper() {
+        if (sInstance == null || sInstance.getCellTracker() == null) {
+            return null;
+        }
+        return sInstance.getCellTracker().getSimSwapper();
+    }
+
     // /data/data/com.SecUpwN.AIMSICD/shared_prefs/com.SecUpwN.AIMSICD_preferences.xml
     public static final String SHARED_PREFERENCES_BASENAME = "com.SecUpwN.AIMSICD_preferences";
     public static final String UPDATE_DISPLAY = "UPDATE_DISPLAY";
@@ -98,6 +121,7 @@ public class AimsicdService extends InjectionService {
     @Override
     public void onCreate() {
         super.onCreate();
+        sInstance = this;
         setTheme(R.style.AppTheme);
 
 
@@ -169,6 +193,7 @@ public class AimsicdService extends InjectionService {
         if (SmsDetector.getSmsDetectionState()) {
             smsdetector.stopSmsDetection();
         }
+        sInstance = null;
         log.info("Service destroyed.");
     }
 
