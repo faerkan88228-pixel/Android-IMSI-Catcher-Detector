@@ -431,4 +431,65 @@
         <item>@string/timeout_spinner_10_min</item>
     </string-array>
 
+    <!-- Defender Agent: IMSI-catcher + LTE spoofing auto-protect, firewall, traffic monitor -->
+    <string name="defender_title">Defender Agent</string>
+    <string name="defender_protection">Protection</string>
+    <string name="defender_auto_protect">Auto-protect (notify + lockdown + radio reset)</string>
+    <string name="defender_firewall">Firewall (iptables on root, VPN sinkhole otherwise)</string>
+    <string name="defender_auto_rules">Firewall auto rule adder</string>
+    <string name="defender_traffic_monitor">In/Out traffic monitoring scanner</string>
+    <string name="defender_lte_spoof">LTE channel-spoofing detection</string>
+    <string name="defender_threat_level">Threat: %1$s</string>
+    <string name="defender_traffic_title">Live Traffic (In/Out)</string>
+    <string name="defender_traffic_waiting">Collecting traffic samples…</string>
+    <string name="defender_traffic_off">Traffic monitor is OFF. Enable it to scan in/out traffic.</string>
+    <string name="defender_no_talkers">No active app traffic in this sample.</string>
+    <string name="defender_firewall_title">Firewall Rules</string>
+    <string name="defender_add_rule">Add</string>
+    <string name="defender_add_rule_title">Block IP or CIDR (outbound)</string>
+    <string name="defender_clear_auto">Clear auto</string>
+    <string name="defender_cleared_auto">Cleared %1$d auto rules</string>
+    <string name="defender_lockdown_now">Lockdown data</string>
+    <string name="defender_clear_lockdown">Clear lockdown</string>
+    <string name="defender_radio_reset">Reset radio</string>
+    <string name="defender_vpn_start">VPN ON</string>
+    <string name="defender_vpn_stop">VPN OFF</string>
+    <string name="defender_events_title">Recent Defender Events</string>
+    <string name="defender_no_events">No defender events yet.</string>
+    <string name="defender_notif_title">Defender %1$s</string>
+    <string name="defender_notif_radio_title">Defender: radio reset needed</string>
+    <string name="defender_data_lockdown_on">Defender: data lockdown ON. Clear it from the Defender panel when safe.</string>
+    <string name="defender_lockdown_limited">Defender: lockdown limited without root — DENY rules still enforced. Turn VPN ON for non-root blocking.</string>
+    <string name="defender_vpn_consent_hint">Tap VPN ON and accept the system dialog to enable non-root blocking.</string>
+    <string name="defender_lockdown_cleared">Defender: lockdown cleared.</string>
+    <string name="defender_radio_reset_done">Defender: radio re-attached (airplane pulse).</string>
+    <string name="defender_radio_reset_manual">Defender: please toggle Airplane Mode once to drop the suspicious cell (needs root for auto).</string>
+    <string name="defender_sig_lac_change">LAC changed for known CID</string>
+    <string name="defender_sig_no_neighbors">No neighbor cells where expected</string>
+    <string name="defender_sig_unknown_cid">CID unknown to OpenCellID import</string>
+    <string name="defender_sig_femto">Femtocell connection</string>
+    <string name="defender_sig_silent_sms">Silent SMS detected</string>
+    <string name="defender_evt_catcher_title">IMSI-catcher suspect</string>
+    <string name="defender_evt_lte_title">LTE channel-spoofing suspect</string>
+    <string name="defender_evt_downgrade_title">Possible downgrade attack (LTE-\u003e2G)</string>
+    <string name="defender_evt_autorule_title">Firewall auto-blocked %1$d target(s)</string>
+    <string name="help_main_defender">Auto-protect agent: IMSI-catcher + LTE spoofing defense, firewall and traffic scanner.</string>
+
+    <!-- Defender preferences -->
+    <string name="pref_defender_title">Defender Agent</string>
+    <string name="pref_defender_autoprotect_title">Auto-protect</string>
+    <string name="pref_defender_autoprotect_summ">Auto lockdown + radio reset on HIGH/CRITICAL threats</string>
+    <string name="pref_defender_firewall_title">Firewall</string>
+    <string name="pref_defender_firewall_summ">Block attacker IPs (iptables with root, VPN sinkhole without)</string>
+    <string name="pref_defender_autorules_title">Firewall auto rule adder</string>
+    <string name="pref_defender_autorules_summ">Auto-block suspicious IPs/apps found by detection + traffic scanner</string>
+    <string name="pref_defender_traffic_title">Traffic monitor</string>
+    <string name="pref_defender_traffic_summ">Scan in/out traffic, per-app rates and upload anomalies</string>
+    <string name="pref_defender_lte_title">LTE spoofing detection</string>
+    <string name="pref_defender_lte_summ">Detect fake tracking areas, PCI confusion, EARFCN hops, downgrades</string>
+    <string name="pref_defender_datalock_title">Data lockdown on HIGH+</string>
+    <string name="pref_defender_datalock_summ">Block outbound data automatically on HIGH threats</string>
+    <string name="pref_defender_radioreset_title">Radio reset on CRITICAL</string>
+    <string name="pref_defender_radioreset_summ">Airplane-mode pulse on CRITICAL (needs root; otherwise manual prompt)</string>
+
 </resources>

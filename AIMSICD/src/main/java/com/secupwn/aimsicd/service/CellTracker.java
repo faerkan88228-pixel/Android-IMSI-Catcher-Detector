@@ -31,6 +31,7 @@ import com.secupwn.aimsicd.AndroidIMSICatcherDetector;
 import com.secupwn.aimsicd.BuildConfig;
 import com.secupwn.aimsicd.R;
 import com.secupwn.aimsicd.constants.ProtectionConstants;
+import com.secupwn.aimsicd.defender.DefenderAgent;
 import com.secupwn.aimsicd.enums.Status;
 import com.secupwn.aimsicd.protection.AutoProtector;
 import com.secupwn.aimsicd.ui.activities.MainActivity;
@@ -133,6 +134,7 @@ public class CellTracker implements SharedPreferences.OnSharedPreferenceChangeLi
     private boolean protectionAirplaneEnabled;
     private boolean protectionWipeEnabled;
     private LinkedBlockingQueue<NeighboringCellInfo> neighboringCellBlockingQueue;
+    private long lastDefenderFeedMs;
 
     private final RealmHelper dbHelper;
     private Context context;
@@ -207,6 +209,54 @@ public class CellTracker implements SharedPreferences.OnSharedPreferenceChangeLi
             Helpers.msgShort(context, context.getString(R.string.stopped_monitoring_cell_information));
         }
         setNotification();
+    }
+
+    /**
+     * Called by the SMS detection path when a silent/type-0 SMS is spotted.
+     * Feeds the defender agent so it can fuse the signal with cell data.
+     */
+    public void setSilentSmsDetected(boolean detected) {
+        this.typeZeroSmsDetected = detected;
+        setNotification();
+        feedDefenderAgent();
+    }
+
+    /**
+     * Push the latest detection flags + cell snapshot to the defender agent.
+     * Throttled to ~1 feed per 5 s unless a detection flag is active, so the
+     * LTE spoof detector still sees RSRP/RAT movement without spamming.
+     */
+    private void feedDefenderAgent() {
+        try {
+            long now = System.currentTimeMillis();
+            boolean urgent = changedLAC || emptyNeighborCellsList || cellIdNotInOpenDb
+                    || femtoDetected || typeZeroSmsDetected;
+            if (!urgent && now - lastDefenderFeedMs < 5000L) {
+                return;
+            }
+            lastDefenderFeedMs = now;
+
+            List<CellInfo> infos = null;
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR2 && tm != null) {
+                    infos = tm.getAllCellInfo();
+                }
+            } catch (Exception ignored) {
+            }
+            int netType = TelephonyManager.NETWORK_TYPE_UNKNOWN;
+            try {
+                if (tm != null) {
+                    netType = tm.getNetworkType();
+                }
+            } catch (Exception ignored) {
+            }
+            DefenderAgent.getInstance(context).onCellTrackerUpdate(
+                    device != null ? device.cell : null, infos, netType,
+                    changedLAC, emptyNeighborCellsList, cellIdNotInOpenDb,
+                    femtoDetected, typeZeroSmsDetected);
+        } catch (Exception e) {
+            log.debug("feedDefenderAgent failed: {}", e.getMessage());
+        }
     }
 
     public void stop() {
@@ -505,6 +555,7 @@ public class CellTracker implements SharedPreferences.OnSharedPreferenceChangeLi
             tinydb.putBoolean(ncListVariableByType, false);
         }
         setNotification();
+        feedDefenderAgent();
     }
 
     /**
@@ -623,6 +674,7 @@ public class CellTracker implements SharedPreferences.OnSharedPreferenceChangeLi
                 }
         }
         setNotification();
+        feedDefenderAgent();
     }
 
     /**
@@ -830,6 +882,8 @@ public class CellTracker implements SharedPreferences.OnSharedPreferenceChangeLi
             // Send it to signal tracker
             signalStrengthTracker.registerSignalStrength(device.cell.getCellId(), device.getSignalDBm());
             //signalStrengthTracker.isMysterious(device.cell.getCid(), device.getSignalDBm());
+            // Feed LTE spoof detector with fresh RSRP (throttled inside).
+            feedDefenderAgent();
         }
 
         // In DB:   No,In,Ou,IO,Do
@@ -1219,10 +1273,13 @@ public class CellTracker implements SharedPreferences.OnSharedPreferenceChangeLi
      * Raised by the silent-SMS detector when a Type-0 (silent) message was captured. Elevates
      * the threat status to DANGER so the user is warned and the configured automatic
      * countermeasures are applied. Latching: the status stays elevated until tracking resets it.
+     *
+     * <p>Delegates to {@link #setSilentSmsDetected(boolean)} so the defender agent fusion
+     * (LTE-spoof correlation, defender log) runs as well — both protection subsystems observe
+     * every silent SMS.</p>
      */
     public void onSilentSmsThreat() {
-        typeZeroSmsDetected = true;
-        setNotification();
+        setSilentSmsDetected(true);
     }
 
     private AndroidIMSICatcherDetector getApplication() {
@@ -1290,6 +1347,7 @@ public class CellTracker implements SharedPreferences.OnSharedPreferenceChangeLi
                 Helpers.msgShort(context, context.getString(R.string.alert_femtocell_tracking_detected));
                 femtoDetected = true;
                 setNotification();
+                feedDefenderAgent();
                 //toggleRadio();
             } else {
                 femtoDetected = false;

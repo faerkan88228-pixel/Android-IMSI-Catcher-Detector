@@ -71,6 +71,46 @@
     </PreferenceCategory>
 
     <PreferenceCategory
+        android:key="pref_key_defender_settings"
+        android:title="@string/pref_defender_title">
+        <CheckBoxPreference
+            android:defaultValue="false"
+            android:key="@string/pref_defender_autoprotect_key"
+            android:summary="@string/pref_defender_autoprotect_summ"
+            android:title="@string/pref_defender_autoprotect_title"/>
+        <CheckBoxPreference
+            android:defaultValue="false"
+            android:key="@string/pref_defender_firewall_key"
+            android:summary="@string/pref_defender_firewall_summ"
+            android:title="@string/pref_defender_firewall_title"/>
+        <CheckBoxPreference
+            android:defaultValue="true"
+            android:key="@string/pref_defender_autorules_key"
+            android:summary="@string/pref_defender_autorules_summ"
+            android:title="@string/pref_defender_autorules_title"/>
+        <CheckBoxPreference
+            android:defaultValue="false"
+            android:key="@string/pref_defender_traffic_key"
+            android:summary="@string/pref_defender_traffic_summ"
+            android:title="@string/pref_defender_traffic_title"/>
+        <CheckBoxPreference
+            android:defaultValue="true"
+            android:key="@string/pref_defender_lte_key"
+            android:summary="@string/pref_defender_lte_summ"
+            android:title="@string/pref_defender_lte_title"/>
+        <CheckBoxPreference
+            android:defaultValue="true"
+            android:key="@string/pref_defender_datalock_key"
+            android:summary="@string/pref_defender_datalock_summ"
+            android:title="@string/pref_defender_datalock_title"/>
+        <CheckBoxPreference
+            android:defaultValue="false"
+            android:key="@string/pref_defender_radioreset_key"
+            android:summary="@string/pref_defender_radioreset_summ"
+            android:title="@string/pref_defender_radioreset_title"/>
+    </PreferenceCategory>
+
+    <PreferenceCategory
         android:key="pref_key_notification_settings"
         android:title="@string/pref_notification_settings">
         <CheckBoxPreference
