@@ -33,6 +33,7 @@ import com.secupwn.aimsicd.R;
 import com.secupwn.aimsicd.constants.ProtectionConstants;
 import com.secupwn.aimsicd.defender.DefenderAgent;
 import com.secupwn.aimsicd.enums.Status;
+import com.secupwn.aimsicd.protection.ApnGuard;
 import com.secupwn.aimsicd.protection.AutoProtector;
 import com.secupwn.aimsicd.ui.activities.MainActivity;
 import com.secupwn.aimsicd.utils.Cell;
@@ -124,6 +125,7 @@ public class CellTracker implements SharedPreferences.OnSharedPreferenceChangeLi
 
     // === Automatic protection (SIM-swap / IMSI-catcher countermeasures) ===
     private SimSwapper mSimSwapper;
+    private ApnGuard mApnGuard;
     private AutoProtector mAutoProtector;
     /** Threat level raised by the protection subsystem; consulted by setNotification(). */
     private Status protectionStatus;
@@ -133,6 +135,12 @@ public class CellTracker implements SharedPreferences.OnSharedPreferenceChangeLi
     // Countermeasure preferences, loaded together with the other settings.
     private boolean protectionAirplaneEnabled;
     private boolean protectionWipeEnabled;
+
+    // APN-guard preferences, loaded together with the other settings.
+    private boolean apnGuardEnabled;
+    private boolean apnAutoBind = true;
+    private boolean apnAutoAdapt;
+    private String apnExpected = "";
     private LinkedBlockingQueue<NeighboringCellInfo> neighboringCellBlockingQueue;
     private long lastDefenderFeedMs;
 
@@ -181,9 +189,11 @@ public class CellTracker implements SharedPreferences.OnSharedPreferenceChangeLi
         device.refreshDeviceInfo(tm, context); // Telephony Manager
         monitorCell = new Cell();
 
-        // Protection subsystem: SIM-swap / subscriber-change detection + automatic
-        // countermeasures. Started explicitly via startProtection().
+        // Protection subsystem: SIM-swap / subscriber-change detection, APN binding
+        // guard + automatic countermeasures. Started explicitly via startProtection().
         mSimSwapper = new SimSwapper(context, this, dbHelper);
+        mApnGuard = new ApnGuard(context, this, dbHelper);
+        applyApnGuardConfig();
 
         // loadPreferences() above may already have enabled tracking (its default is ON); in that
         // case the protection subsystem must be started now — it would otherwise only start on
@@ -392,6 +402,22 @@ public class CellTracker implements SharedPreferences.OnSharedPreferenceChangeLi
             protectionAirplaneEnabled = sharedPreferences.getBoolean(key, false);
         } else if (key.equals(context.getString(R.string.pref_wipe_sensitive_key))) {
             protectionWipeEnabled = sharedPreferences.getBoolean(key, false);
+        } else if (key.equals(context.getString(R.string.pref_apn_guard_key))) {
+            apnGuardEnabled = sharedPreferences.getBoolean(key, false);
+            applyApnGuardConfig();
+            recheckApn();
+        } else if (key.equals(context.getString(R.string.pref_apn_autobind_key))) {
+            apnAutoBind = sharedPreferences.getBoolean(key, true);
+            applyApnGuardConfig();
+            recheckApn();
+        } else if (key.equals(context.getString(R.string.pref_apn_autoadapt_key))) {
+            apnAutoAdapt = sharedPreferences.getBoolean(key, false);
+            applyApnGuardConfig();
+            recheckApn();
+        } else if (key.equals(context.getString(R.string.pref_apn_expected_key))) {
+            apnExpected = sharedPreferences.getString(key, "");
+            applyApnGuardConfig();
+            recheckApn();
         }
     }
 
@@ -727,6 +753,23 @@ public class CellTracker implements SharedPreferences.OnSharedPreferenceChangeLi
         this.vibrateEnabled = prefs.getBoolean(context.getString(R.string.pref_notification_vibrate_enable), true);
         this.vibrateMinThreatLevel = Integer.valueOf(prefs.getString(context.getString(R.string.pref_notification_vibrate_min_level), String.valueOf(Status.MEDIUM.ordinal())));
         this.protectionAirplaneEnabled = prefs.getBoolean(context.getString(R.string.pref_sim_swap_protect_key), false);
+        this.protectionWipeEnabled = prefs.getBoolean(context.getString(R.string.pref_wipe_sensitive_key), false);
+        this.apnGuardEnabled = prefs.getBoolean(context.getString(R.string.pref_apn_guard_key), false);
+        this.apnAutoBind = prefs.getBoolean(context.getString(R.string.pref_apn_autobind_key), true);
+        this.apnAutoAdapt = prefs.getBoolean(context.getString(R.string.pref_apn_autoadapt_key), false);
+        this.apnExpected = prefs.getString(context.getString(R.string.pref_apn_expected_key), "");
+        if (this.apnExpected == null) {
+            this.apnExpected = "";
+        }
+
+        // Default to Automatic ("1")
+        if (refreshRate.isEmpty()) {
+            refreshRate = "1";
+        }
+
+        int rate = Integer.parseInt(refreshRate);
+        long t;
+        ig(R.string.pref_sim_swap_protect_key), false);
         this.protectionWipeEnabled = prefs.getBoolean(context.getString(R.string.pref_wipe_sensitive_key), false);
 
         // Default to Automatic ("1")
@@ -1187,6 +1230,10 @@ public class CellTracker implements SharedPreferences.OnSharedPreferenceChangeLi
         if (mSimSwapper != null) {
             mSimSwapper.start();
         }
+        if (mApnGuard != null) {
+            applyApnGuardConfig();
+            mApnGuard.start();
+        }
     }
 
     /**
@@ -1197,8 +1244,44 @@ public class CellTracker implements SharedPreferences.OnSharedPreferenceChangeLi
         if (mSimSwapper != null) {
             mSimSwapper.stop();
         }
+        if (mApnGuard != null) {
+            mApnGuard.stop();
+        }
         protectionStatus = null;
         protectionNotificationText = null;
+    }
+
+    /**
+     * Pushes the currently loaded APN-guard preferences into the {@link ApnGuard}.
+     * No-op until the guard is constructed (see the constructor ordering note in
+     * {@link #startProtection()}).
+     */
+    private void applyApnGuardConfig() {
+        if (mApnGuard == null) {
+            return;
+        }
+        mApnGuard.setEnabled(apnGuardEnabled);
+        mApnGuard.setAutoBind(apnAutoBind);
+        mApnGuard.setAutoAdapt(apnAutoAdapt);
+        mApnGuard.setExpectedApn(apnExpected);
+    }
+
+    /**
+     * Re-evaluates the active APN immediately (used when an APN preference changes so the
+     * user gets instant feedback instead of waiting for the next provider notification).
+     */
+    private void recheckApn() {
+        if (mApnGuard != null) {
+            mApnGuard.checkApn();
+        }
+    }
+
+    /**
+     * Returns the {@link ApnGuard} attached to this tracker. May be {@code null} before the
+     * protection subsystem is constructed.
+     */
+    public ApnGuard getApnGuard() {
+        return mApnGuard;
     }
 
     /**
@@ -1240,10 +1323,10 @@ public class CellTracker implements SharedPreferences.OnSharedPreferenceChangeLi
     /**
      * {@inheritDoc}
      *
-     * <p>Called by {@link SimSwapper} when a protection-relevant event (SIM swap, SIM absent,
-     * network loss, ...) was detected. The event has already been written to the EventLog by the
-     * caller; here we update the visible threat level and let {@link #setNotification()} run the
-     * configured countermeasures.</p>
+     * <p>Called by {@link SimSwapper} or {@link ApnGuard} when a protection-relevant event
+     * (SIM swap, SIM absent, network loss, APN mismatch, ...) was detected. The event has
+     * already been written to the EventLog by the caller; here we update the visible threat
+     * level and let {@link #setNotification()} run the configured countermeasures.</p>
      */
     @Override
     public void onProtectionEvent(Status threatLevel, int eventId, String description) {
@@ -1261,6 +1344,9 @@ public class CellTracker implements SharedPreferences.OnSharedPreferenceChangeLi
                 break;
             case ProtectionConstants.EVENT_NETWORK_LOSS:
                 protectionNotificationText = context.getString(R.string.alert_network_signal_lost);
+                break;
+            case ProtectionConstants.EVENT_APN_MISMATCH:
+                protectionNotificationText = context.getString(R.string.alert_apn_mismatch);
                 break;
             default:
                 protectionNotificationText = description;
@@ -1429,6 +1515,42 @@ public class CellTracker implements SharedPreferences.OnSharedPreferenceChangeLi
     }
 
     //=================================================================================================
+    // END Femtocatcher code
+    //=================================================================================================
+
+    final PhoneStateListener phoneStatelistener = new PhoneStateListener() {
+        private void handle() {
+            handlePhoneStateChange();
+        }
+        @Override
+        public void onServiceStateChanged(ServiceState serviceState) {
+            handle();
+        }
+        @Override
+        public void onDataConnectionStateChanged(int state) {
+            handle();
+        }
+        @Override
+        public void onDataConnectionStateChanged(int state, int networkType) {
+            handle();
+        }
+        @Override
+        public void onSignalStrengthsChanged(SignalStrength signalStrength) {
+            handle();
+        }
+        @Override
+        public void onCellInfoChanged(List<CellInfo> cellInfo) {
+            handle();
+        }
+
+        @Override
+        public void onCellLocationChanged(CellLocation location) {
+            handle();
+        }
+
+    };
+}
+================================
     // END Femtocatcher code
     //=================================================================================================
 

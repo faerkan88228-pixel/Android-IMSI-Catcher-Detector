@@ -53,6 +53,7 @@ guarantee.
 | File | Responsibility |
 |---|---|
 | `service/SimSwapper.java` | Watches SIM/subscriber identity (SHA‑256 fingerprint baseline vs. current) + coarse radio state. Raises typed events. |
+| `protection/ApnGuard.java` | Binds protection to the user's APN: watches the preferred APN, alarms on mismatch, auto-binds the baseline and auto-adapts to persistent changes. See §3.1. |
 | `protection/AutoProtector.java` | Executes the automatic countermeasures, each individually debounced (60 s). |
 | `receiver/SimSwapAlarmReceiver.java` | Receives `SIM_STATE_CHANGED` broadcasts so **hot** swaps are seen even when the app UI is closed; forwards to the running service. |
 | `constants/ProtectionConstants.java` | Event IDs (DF_id 100–109), SharedPreferences keys, cooldowns. |
@@ -61,11 +62,11 @@ guarantee.
 
 | File | Change |
 |---|---|
-| `service/CellTracker.java` | Implements `SimSwapper.Reactor`; owns threat status + countermeasure dispatch; `startProtection()/stopProtection()` lifecycle; new `onSilentSmsThreat()`; added `HIGH` notification branch; SIM-swap / network-loss text. |
+| `service/CellTracker.java` | Implements `SimSwapper.Reactor`; owns threat status + countermeasure dispatch; `startProtection()/stopProtection()` lifecycle (now also starts/stops `ApnGuard`); new `onSilentSmsThreat()`; added `HIGH` notification branch; SIM-swap / network-loss / APN-mismatch text. |
 | `service/AimsicdService.java` | Static `isRunning()` / `getSimSwapper()`, `sInstance` lifecycle. |
 | `smsdetection/SmsDetector.java` | Type-0 (silent) SMS now escalates the app threat status. |
 | `utils/TinyDB.java` | Added `putString`, `putLong`, `getLong` (fingerprint + cooldown storage). |
-| `res/values/…` + `xml/preferences.xml` | Two new preferences + user-facing + untranslatable strings. |
+| `res/values/…` + `xml/preferences.xml` | SIM-swap preferences + four APN-guard preferences (guard toggle, expected APN, auto-bind, auto-adapt). |
 | `AndroidManifest.xml` | Registered `SimSwapAlarmReceiver` (SIM_STATE_CHANGED). |
 | `data/model/Event.java` | Documented reserved DF_id range. |
 
@@ -82,7 +83,45 @@ SIM_STATE_CHANGED broadcast ───────┼──> SimSwapper ──> R
                                    │                              ├─ AutoProtector.enableAirplaneMode()
                                    │                              └─ AutoProtector.wipeSensitiveData()
 Silent SMS (logcat, root) ─────────┴──> SmsDetector ──> CellTracker.onSilentSmsThreat()
+
+Telephony provider (preferapn) ──> ApnGuard ──> Realm EventLog (103/107/108/109)
+                                        │
+                                        └──> Reactor = CellTracker.onProtectionEvent()
+                                                 └─ HIGH on mismatch ──> setNotification()
+                                                                              └─ applyProtectionCountermeasures()
 ```
+
+### 3.1 APN binding guard — auto-bind & adaptation algorithm
+
+The user binds the app to their carrier APN in **Protection Settings → My APN**
+(`pref_apn_expected`), or leaves it empty and lets the app learn it. The reference used for
+comparison is, in precedence order: (1) the user-typed APN, (2) the learned baseline in
+TinyDB (`aimsicd_apn_baseline`).
+
+One `checkApn()` cycle (triggered at startup, on every telephony-provider change
+notification, and immediately after any APN preference edit):
+
+1. **Observe** — read the preferred APN row (`content://telephony/carriers/preferapn`,
+   `name` + `apn` columns). Unreadable (locked-down ROM) → skip silently.
+2. **Auto-bind** — no reference yet + auto-bind on (default) → silently record the current
+   APN as the baseline, log `EVENT_APN_BASELINED` (103). No alarm.
+3. **Compare** — match if the reference equals the active `apn` **or** `name`
+   (case-insensitive), so the user may type whichever value they see in the system APN
+   screen.
+4. **Mismatch episode** — first sighting of a differing APN opens an episode keyed by that
+   value and raises one `HIGH` alarm (`EVENT_APN_MISMATCH`, 107 → notification +
+   configured countermeasures, e.g. airplane mode). Repeats are cooldown-gated (5 min).
+   A different APN value — or an edit of the expected APN — starts a fresh episode.
+5. **Adapt** — if auto-adapt is on (default off), the reference is the *learned* baseline,
+   and the same differing APN persists for 10 min → adopt it as the new baseline and log
+   `EVENT_APN_REBOUND` (108). A user-typed APN is **never** overridden automatically.
+6. **Restore** — active APN returns to the reference while an episode is open → close the
+   episode with `EVENT_APN_RESTORED` (109).
+
+Honest limits: the guard is a **read-only tripwire**. Switching the APN back
+programmatically needs `WRITE_APN_SETTINGS` (system-app-only since Android 4.2), so after
+an alarm the user restores the APN manually in the system *Access Point Names* screen;
+the app guarantees the alert + evidence log + (optionally) the radio cut.
 
 ---
 
@@ -122,6 +161,10 @@ Added under **Protection Settings** in `preferences.xml`:
 |---|---|---|
 | `pref_sim_swap_protect` | SIM-Swap Auto-Protection (airplane mode on detection) | `false` |
 | `pref_wipe_sensitive` | Wipe Trails on Danger (delete local cell & SMS logs) | `false` |
+| `pref_apn_guard` | APN Binding Guard (master switch) | `false` |
+| `pref_apn_expected` | My APN (user-typed binding; empty = learn automatically) | `""` |
+| `pref_apn_autobind` | Auto-Bind APN (silently learn the baseline when none is set) | `true` |
+| `pref_apn_autoadapt` | Auto-Adapt to APN Changes (adopt a persistent new APN) | `false` |
 
 ---
 
@@ -135,9 +178,13 @@ The DF_id space `100..109` is reserved for this subsystem (documented in `Event.
 | 100 | SIM swap detected (fingerprint changed) |
 | 101 | SIM card removed |
 | 102 | SIM card re-inserted |
+| 103 | APN baseline recorded (auto-bind, informational) |
 | 104 | Hard network loss (no signal / no network) |
 | 105 | Auto-protection engaged airplane mode |
 | 106 | Auto-protection wiped sensitive data |
+| 107 | Active APN differs from expected / baseline APN (`HIGH`) |
+| 108 | APN auto-adapted to a persistently changed APN (informational) |
+| 109 | Active APN restored to expected / baseline (informational) |
 
 ---
 

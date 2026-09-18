@@ -68,6 +68,29 @@
             android:key="@string/pref_wipe_sensitive_key"
             android:summary="@string/pref_wipe_sensitive_summ"
             android:title="@string/pref_wipe_sensitive_title"/>
+        <CheckBoxPreference
+            android:defaultValue="false"
+            android:key="@string/pref_apn_guard_key"
+            android:summary="@string/pref_apn_guard_summ"
+            android:title="@string/pref_apn_guard_title"/>
+        <EditTextPreference
+            android:defaultValue=""
+            android:dependency="pref_apn_guard"
+            android:key="@string/pref_apn_expected_key"
+            android:summary="@string/pref_apn_expected_summ"
+            android:title="@string/pref_apn_expected_title"/>
+        <CheckBoxPreference
+            android:defaultValue="true"
+            android:dependency="pref_apn_guard"
+            android:key="@string/pref_apn_autobind_key"
+            android:summary="@string/pref_apn_autobind_summ"
+            android:title="@string/pref_apn_autobind_title"/>
+        <CheckBoxPreference
+            android:defaultValue="false"
+            android:dependency="pref_apn_guard"
+            android:key="@string/pref_apn_autoadapt_key"
+            android:summary="@string/pref_apn_autoadapt_summ"
+            android:title="@string/pref_apn_autoadapt_title"/>
     </PreferenceCategory>
 
     <PreferenceCategory
