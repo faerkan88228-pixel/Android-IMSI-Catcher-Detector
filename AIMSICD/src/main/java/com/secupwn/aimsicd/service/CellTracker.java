@@ -31,8 +31,12 @@ import com.secupwn.aimsicd.AndroidIMSICatcherDetector;
 import com.secupwn.aimsicd.BuildConfig;
 import com.secupwn.aimsicd.R;
 import com.secupwn.aimsicd.constants.ProtectionConstants;
+import com.secupwn.aimsicd.defender.DefenderAgent;
 import com.secupwn.aimsicd.enums.Status;
+import com.secupwn.aimsicd.protection.ApnGuard;
 import com.secupwn.aimsicd.protection.AutoProtector;
+import com.secupwn.aimsicd.prometheus.NeuralErrorLogger;
+import com.secupwn.aimsicd.prometheus.PrometheusUplink;
 import com.secupwn.aimsicd.ui.activities.MainActivity;
 import com.secupwn.aimsicd.utils.Cell;
 import com.secupwn.aimsicd.utils.Device;
@@ -123,6 +127,7 @@ public class CellTracker implements SharedPreferences.OnSharedPreferenceChangeLi
 
     // === Automatic protection (SIM-swap / IMSI-catcher countermeasures) ===
     private SimSwapper mSimSwapper;
+    private ApnGuard mApnGuard;
     private AutoProtector mAutoProtector;
     /** Threat level raised by the protection subsystem; consulted by setNotification(). */
     private Status protectionStatus;
@@ -132,7 +137,20 @@ public class CellTracker implements SharedPreferences.OnSharedPreferenceChangeLi
     // Countermeasure preferences, loaded together with the other settings.
     private boolean protectionAirplaneEnabled;
     private boolean protectionWipeEnabled;
+
+    // APN-guard preferences, loaded together with the other settings.
+    private boolean apnGuardEnabled;
+    private boolean apnAutoBind = true;
+    private boolean apnAutoAdapt;
+    private String apnExpected = "";
+
+    // Prometheus uplink: this node streams to the Infinity backend.
+    private PrometheusUplink mPrometheusUplink;
+    private boolean prometheusEnabled;
+    private String prometheusEndpoint = "";
+    private String prometheusToken = "";
     private LinkedBlockingQueue<NeighboringCellInfo> neighboringCellBlockingQueue;
+    private long lastDefenderFeedMs;
 
     private final RealmHelper dbHelper;
     private Context context;
@@ -179,9 +197,14 @@ public class CellTracker implements SharedPreferences.OnSharedPreferenceChangeLi
         device.refreshDeviceInfo(tm, context); // Telephony Manager
         monitorCell = new Cell();
 
-        // Protection subsystem: SIM-swap / subscriber-change detection + automatic
-        // countermeasures. Started explicitly via startProtection().
+        // Protection subsystem: SIM-swap / subscriber-change detection, APN binding
+        // guard + automatic countermeasures. Started explicitly via startProtection().
         mSimSwapper = new SimSwapper(context, this, dbHelper);
+        mApnGuard = new ApnGuard(context, this, dbHelper);
+        applyApnGuardConfig();
+        mPrometheusUplink = new PrometheusUplink(context);
+        applyPrometheusConfig();
+        NeuralErrorLogger.install(context, mPrometheusUplink);
 
         // loadPreferences() above may already have enabled tracking (its default is ON); in that
         // case the protection subsystem must be started now — it would otherwise only start on
@@ -207,6 +230,54 @@ public class CellTracker implements SharedPreferences.OnSharedPreferenceChangeLi
             Helpers.msgShort(context, context.getString(R.string.stopped_monitoring_cell_information));
         }
         setNotification();
+    }
+
+    /**
+     * Called by the SMS detection path when a silent/type-0 SMS is spotted.
+     * Feeds the defender agent so it can fuse the signal with cell data.
+     */
+    public void setSilentSmsDetected(boolean detected) {
+        this.typeZeroSmsDetected = detected;
+        setNotification();
+        feedDefenderAgent();
+    }
+
+    /**
+     * Push the latest detection flags + cell snapshot to the defender agent.
+     * Throttled to ~1 feed per 5 s unless a detection flag is active, so the
+     * LTE spoof detector still sees RSRP/RAT movement without spamming.
+     */
+    private void feedDefenderAgent() {
+        try {
+            long now = System.currentTimeMillis();
+            boolean urgent = changedLAC || emptyNeighborCellsList || cellIdNotInOpenDb
+                    || femtoDetected || typeZeroSmsDetected;
+            if (!urgent && now - lastDefenderFeedMs < 5000L) {
+                return;
+            }
+            lastDefenderFeedMs = now;
+
+            List<CellInfo> infos = null;
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR2 && tm != null) {
+                    infos = tm.getAllCellInfo();
+                }
+            } catch (Exception ignored) {
+            }
+            int netType = TelephonyManager.NETWORK_TYPE_UNKNOWN;
+            try {
+                if (tm != null) {
+                    netType = tm.getNetworkType();
+                }
+            } catch (Exception ignored) {
+            }
+            DefenderAgent.getInstance(context).onCellTrackerUpdate(
+                    device != null ? device.cell : null, infos, netType,
+                    changedLAC, emptyNeighborCellsList, cellIdNotInOpenDb,
+                    femtoDetected, typeZeroSmsDetected);
+        } catch (Exception e) {
+            log.debug("feedDefenderAgent failed: {}", e.getMessage());
+        }
     }
 
     public void stop() {
@@ -342,6 +413,31 @@ public class CellTracker implements SharedPreferences.OnSharedPreferenceChangeLi
             protectionAirplaneEnabled = sharedPreferences.getBoolean(key, false);
         } else if (key.equals(context.getString(R.string.pref_wipe_sensitive_key))) {
             protectionWipeEnabled = sharedPreferences.getBoolean(key, false);
+        } else if (key.equals(context.getString(R.string.pref_apn_guard_key))) {
+            apnGuardEnabled = sharedPreferences.getBoolean(key, false);
+            applyApnGuardConfig();
+            recheckApn();
+        } else if (key.equals(context.getString(R.string.pref_apn_autobind_key))) {
+            apnAutoBind = sharedPreferences.getBoolean(key, true);
+            applyApnGuardConfig();
+            recheckApn();
+        } else if (key.equals(context.getString(R.string.pref_apn_autoadapt_key))) {
+            apnAutoAdapt = sharedPreferences.getBoolean(key, false);
+            applyApnGuardConfig();
+            recheckApn();
+        } else if (key.equals(context.getString(R.string.pref_apn_expected_key))) {
+            apnExpected = sharedPreferences.getString(key, "");
+            applyApnGuardConfig();
+            recheckApn();
+        } else if (key.equals(context.getString(R.string.pref_prometheus_enable_key))) {
+            prometheusEnabled = sharedPreferences.getBoolean(key, false);
+            applyPrometheusConfig();
+        } else if (key.equals(context.getString(R.string.pref_prometheus_endpoint_key))) {
+            prometheusEndpoint = sharedPreferences.getString(key, "");
+            applyPrometheusConfig();
+        } else if (key.equals(context.getString(R.string.pref_prometheus_token_key))) {
+            prometheusToken = sharedPreferences.getString(key, "");
+            applyPrometheusConfig();
         }
     }
 
@@ -505,6 +601,7 @@ public class CellTracker implements SharedPreferences.OnSharedPreferenceChangeLi
             tinydb.putBoolean(ncListVariableByType, false);
         }
         setNotification();
+        feedDefenderAgent();
     }
 
     /**
@@ -623,6 +720,7 @@ public class CellTracker implements SharedPreferences.OnSharedPreferenceChangeLi
                 }
         }
         setNotification();
+        feedDefenderAgent();
     }
 
     /**
@@ -676,6 +774,22 @@ public class CellTracker implements SharedPreferences.OnSharedPreferenceChangeLi
         this.vibrateMinThreatLevel = Integer.valueOf(prefs.getString(context.getString(R.string.pref_notification_vibrate_min_level), String.valueOf(Status.MEDIUM.ordinal())));
         this.protectionAirplaneEnabled = prefs.getBoolean(context.getString(R.string.pref_sim_swap_protect_key), false);
         this.protectionWipeEnabled = prefs.getBoolean(context.getString(R.string.pref_wipe_sensitive_key), false);
+        this.apnGuardEnabled = prefs.getBoolean(context.getString(R.string.pref_apn_guard_key), false);
+        this.apnAutoBind = prefs.getBoolean(context.getString(R.string.pref_apn_autobind_key), true);
+        this.apnAutoAdapt = prefs.getBoolean(context.getString(R.string.pref_apn_autoadapt_key), false);
+        this.apnExpected = prefs.getString(context.getString(R.string.pref_apn_expected_key), "");
+        if (this.apnExpected == null) {
+            this.apnExpected = "";
+        }
+        this.prometheusEnabled = prefs.getBoolean(context.getString(R.string.pref_prometheus_enable_key), false);
+        this.prometheusEndpoint = prefs.getString(context.getString(R.string.pref_prometheus_endpoint_key), "");
+        this.prometheusToken = prefs.getString(context.getString(R.string.pref_prometheus_token_key), "");
+        if (this.prometheusEndpoint == null) {
+            this.prometheusEndpoint = "";
+        }
+        if (this.prometheusToken == null) {
+            this.prometheusToken = "";
+        }
 
         // Default to Automatic ("1")
         if (refreshRate.isEmpty()) {
@@ -830,6 +944,8 @@ public class CellTracker implements SharedPreferences.OnSharedPreferenceChangeLi
             // Send it to signal tracker
             signalStrengthTracker.registerSignalStrength(device.cell.getCellId(), device.getSignalDBm());
             //signalStrengthTracker.isMysterious(device.cell.getCid(), device.getSignalDBm());
+            // Feed LTE spoof detector with fresh RSRP (throttled inside).
+            feedDefenderAgent();
         }
 
         // In DB:   No,In,Ou,IO,Do
@@ -1133,6 +1249,10 @@ public class CellTracker implements SharedPreferences.OnSharedPreferenceChangeLi
         if (mSimSwapper != null) {
             mSimSwapper.start();
         }
+        if (mApnGuard != null) {
+            applyApnGuardConfig();
+            mApnGuard.start();
+        }
     }
 
     /**
@@ -1143,8 +1263,44 @@ public class CellTracker implements SharedPreferences.OnSharedPreferenceChangeLi
         if (mSimSwapper != null) {
             mSimSwapper.stop();
         }
+        if (mApnGuard != null) {
+            mApnGuard.stop();
+        }
         protectionStatus = null;
         protectionNotificationText = null;
+    }
+
+    /**
+     * Pushes the currently loaded APN-guard preferences into the {@link ApnGuard}.
+     * No-op until the guard is constructed (see the constructor ordering note in
+     * {@link #startProtection()}).
+     */
+    private void applyApnGuardConfig() {
+        if (mApnGuard == null) {
+            return;
+        }
+        mApnGuard.setEnabled(apnGuardEnabled);
+        mApnGuard.setAutoBind(apnAutoBind);
+        mApnGuard.setAutoAdapt(apnAutoAdapt);
+        mApnGuard.setExpectedApn(apnExpected);
+    }
+
+    /**
+     * Re-evaluates the active APN immediately (used when an APN preference changes so the
+     * user gets instant feedback instead of waiting for the next provider notification).
+     */
+    private void recheckApn() {
+        if (mApnGuard != null) {
+            mApnGuard.checkApn();
+        }
+    }
+
+    /**
+     * Returns the {@link ApnGuard} attached to this tracker. May be {@code null} before the
+     * protection subsystem is constructed.
+     */
+    public ApnGuard getApnGuard() {
+        return mApnGuard;
     }
 
     /**
@@ -1186,10 +1342,10 @@ public class CellTracker implements SharedPreferences.OnSharedPreferenceChangeLi
     /**
      * {@inheritDoc}
      *
-     * <p>Called by {@link SimSwapper} when a protection-relevant event (SIM swap, SIM absent,
-     * network loss, ...) was detected. The event has already been written to the EventLog by the
-     * caller; here we update the visible threat level and let {@link #setNotification()} run the
-     * configured countermeasures.</p>
+     * <p>Called by {@link SimSwapper} or {@link ApnGuard} when a protection-relevant event
+     * (SIM swap, SIM absent, network loss, APN mismatch, ...) was detected. The event has
+     * already been written to the EventLog by the caller; here we update the visible threat
+     * level and let {@link #setNotification()} run the configured countermeasures.</p>
      */
     @Override
     public void onProtectionEvent(Status threatLevel, int eventId, String description) {
@@ -1208,21 +1364,53 @@ public class CellTracker implements SharedPreferences.OnSharedPreferenceChangeLi
             case ProtectionConstants.EVENT_NETWORK_LOSS:
                 protectionNotificationText = context.getString(R.string.alert_network_signal_lost);
                 break;
+            case ProtectionConstants.EVENT_APN_MISMATCH:
+                protectionNotificationText = context.getString(R.string.alert_apn_mismatch);
+                break;
             default:
                 protectionNotificationText = description;
                 break;
         }
         setNotification();
+        reportToPrometheus(threatLevel, eventId);
+    }
+
+    /**
+     * Streams the protection event to the Prometheus backend (no-op unless the
+     * uplink is enabled and configured in Settings -> Prometheus Uplink).
+     */
+    private void reportToPrometheus(Status threatLevel, int eventId) {
+        if (mPrometheusUplink == null || threatLevel == null) {
+            return;
+        }
+        // The wire contract has no SKULL level; escalate it as DANGER.
+        String level = threatLevel == Status.SKULL ? Status.DANGER.name() : threatLevel.name();
+        mPrometheusUplink.reportTelemetry(eventId, level, protectionNotificationText, null);
+    }
+
+    /**
+     * Pushes the currently loaded uplink preferences into the {@link PrometheusUplink}.
+     */
+    private void applyPrometheusConfig() {
+        if (mPrometheusUplink == null) {
+            return;
+        }
+        mPrometheusUplink.setEnabled(prometheusEnabled);
+        mPrometheusUplink.setEndpoint(prometheusEndpoint);
+        mPrometheusUplink.setDeviceToken(prometheusToken);
     }
 
     /**
      * Raised by the silent-SMS detector when a Type-0 (silent) message was captured. Elevates
      * the threat status to DANGER so the user is warned and the configured automatic
      * countermeasures are applied. Latching: the status stays elevated until tracking resets it.
+     *
+     * <p>Delegates to {@link #setSilentSmsDetected(boolean)} so the defender agent fusion
+     * (LTE-spoof correlation, defender log) runs as well — both protection subsystems observe
+     * every silent SMS.</p>
      */
     public void onSilentSmsThreat() {
-        typeZeroSmsDetected = true;
-        setNotification();
+        setSilentSmsDetected(true);
     }
 
     private AndroidIMSICatcherDetector getApplication() {
@@ -1290,6 +1478,7 @@ public class CellTracker implements SharedPreferences.OnSharedPreferenceChangeLi
                 Helpers.msgShort(context, context.getString(R.string.alert_femtocell_tracking_detected));
                 femtoDetected = true;
                 setNotification();
+                feedDefenderAgent();
                 //toggleRadio();
             } else {
                 femtoDetected = false;
