@@ -798,16 +798,6 @@ public class CellTracker implements SharedPreferences.OnSharedPreferenceChangeLi
 
         int rate = Integer.parseInt(refreshRate);
         long t;
-        ig(R.string.pref_sim_swap_protect_key), false);
-        this.protectionWipeEnabled = prefs.getBoolean(context.getString(R.string.pref_wipe_sensitive_key), false);
-
-        // Default to Automatic ("1")
-        if (refreshRate.isEmpty()) {
-            refreshRate = "1";
-        }
-
-        int rate = Integer.parseInt(refreshRate);
-        long t;
         if (rate == 1) {
             t = 15L; // Automatic refresh rate is 15 seconds
         } else {
@@ -1570,42 +1560,6 @@ public class CellTracker implements SharedPreferences.OnSharedPreferenceChangeLi
     }
 
     //=================================================================================================
-    // END Femtocatcher code
-    //=================================================================================================
-
-    final PhoneStateListener phoneStatelistener = new PhoneStateListener() {
-        private void handle() {
-            handlePhoneStateChange();
-        }
-        @Override
-        public void onServiceStateChanged(ServiceState serviceState) {
-            handle();
-        }
-        @Override
-        public void onDataConnectionStateChanged(int state) {
-            handle();
-        }
-        @Override
-        public void onDataConnectionStateChanged(int state, int networkType) {
-            handle();
-        }
-        @Override
-        public void onSignalStrengthsChanged(SignalStrength signalStrength) {
-            handle();
-        }
-        @Override
-        public void onCellInfoChanged(List<CellInfo> cellInfo) {
-            handle();
-        }
-
-        @Override
-        public void onCellLocationChanged(CellLocation location) {
-            handle();
-        }
-
-    };
-}
-================================
     // END Femtocatcher code
     //=================================================================================================
 

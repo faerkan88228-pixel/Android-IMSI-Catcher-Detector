@@ -1,10 +1,11 @@
 """Detection-telemetry ingest + history."""
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.encoders import jsonable_encoder
 
 from .. import db
 from ..auth import get_current_claims
-from ..models import TelemetryAck, TelemetryEvent
+from ..models import TelemetryAck, TelemetryEvent, dump
 from ..stream import hub
 
 router = APIRouter(prefix="/v1/telemetry", tags=["telemetry"])
@@ -12,7 +13,7 @@ router = APIRouter(prefix="/v1/telemetry", tags=["telemetry"])
 
 @router.post("", response_model=TelemetryAck, status_code=201)
 async def ingest(event: TelemetryEvent, claims: dict = Depends(get_current_claims)):
-    payload = event.dict()
+    payload = dump(event)
     # Devices report for themselves: the token subject wins over the body.
     if "device" in (claims.get("roles") or []):
         payload["device_id"] = claims.get("sub")
@@ -21,7 +22,8 @@ async def ingest(event: TelemetryEvent, claims: dict = Depends(get_current_claim
         row_id = db.insert_telemetry(payload)
     except Exception as exc:
         raise HTTPException(status_code=503, detail="database unavailable: %s" % exc)
-    await hub.broadcast({"type": "telemetry", "id": row_id, "event": payload})
+    # jsonable_encoder: datetimes are not JSON-serializable for the WS fan-out.
+    await hub.broadcast(jsonable_encoder({"type": "telemetry", "id": row_id, "event": payload}))
     return TelemetryAck(id=row_id)
 
 

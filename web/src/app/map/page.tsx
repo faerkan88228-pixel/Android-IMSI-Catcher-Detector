@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import CityMap from "@/components/CityMap";
 import HudStatus, { type WsState } from "@/components/HudStatus";
@@ -14,7 +14,7 @@ export const dynamic = "force-dynamic";
 
 const TOKEN_KEY = "infinity-operator-token";
 
-export default function MapPage() {
+function MapContent() {
   const tab = useSearchParams().get("tab") ?? "sectors";
   const [token, setToken] = useState("");
   const [sectors, setSectors] = useState<Sector[]>([]);
@@ -153,5 +153,21 @@ export default function MapPage() {
       {tab === "reports" && <ReportsPanel token={token} />}
       {tab === "settings" && <SettingsDrawer token={token} onSave={saveToken} />}
     </div>
+  );
+}
+
+export default function MapPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="px-4 pt-4">
+          <p className="hud-panel rounded-lg p-4 text-sm uppercase tracking-widest text-infinitycyan/70">
+            Loading city…
+          </p>
+        </div>
+      }
+    >
+      <MapContent />
+    </Suspense>
   );
 }

@@ -108,8 +108,9 @@ def check():
     """Return True when a trivial query succeeds."""
     try:
         with _cursor() as cur:
-            cur.execute("SELECT 1")
-            return cur.fetchone()[0] == 1
+            # RealDictCursor returns a dict, not a tuple — alias the column.
+            cur.execute("SELECT 1 AS ok")
+            return cur.fetchone()["ok"] == 1
     except Exception:
         return False
 

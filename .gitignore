@@ -76,3 +76,5 @@ __pycache__/
 *.pyc
 .venv/
 .env
+next-env.d.ts
+*.tsbuildinfo

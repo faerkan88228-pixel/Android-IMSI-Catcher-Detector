@@ -5,14 +5,14 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from .. import db
 from ..auth import get_current_claims, viewer_of
 from ..masking import can_read_error_history
-from ..models import ErrorReport, TelemetryAck
+from ..models import ErrorReport, TelemetryAck, dump
 
 router = APIRouter(prefix="/v1/errors", tags=["errors"])
 
 
 @router.post("", response_model=TelemetryAck, status_code=201)
 async def ingest(report: ErrorReport, claims: dict = Depends(get_current_claims)):
-    payload = report.dict()
+    payload = dump(report)
     if "device" in (claims.get("roles") or []) and not payload.get("device_id"):
         payload["device_id"] = claims.get("sub")
     try:

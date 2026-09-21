@@ -36,14 +36,12 @@ async def heartbeat(body: Heartbeat, claims: dict = Depends(get_current_claims))
         raise HTTPException(status_code=403, detail="token lacks sub/faction")
     try:
         db.upsert_agent(agent)
-    except Exception as exc:
-        raise HTTPException(status_code=503, detail="database unavailable: %s" % exc)
-    faction, roles = viewer_of(claims)
-    agent["last_seen"] = None  # refreshed below from the stored row
-    try:
-        stored = [row for row in db.list_agents() if row["agent_id"] == agent["agent_id"]]
+        stored = [
+            row for row in db.list_agents() if row["agent_id"] == agent["agent_id"]
+        ]
     except Exception as exc:
         raise HTTPException(status_code=503, detail="database unavailable: %s" % exc)
     if not stored:
         raise HTTPException(status_code=503, detail="heartbeat not persisted")
+    faction, roles = viewer_of(claims)
     return mask_agent_for_viewer(stored[0], faction, roles)

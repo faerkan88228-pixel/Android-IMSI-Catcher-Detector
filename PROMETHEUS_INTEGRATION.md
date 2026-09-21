@@ -89,17 +89,22 @@ Seeded idempotently into Postgres (`sectors` table); served by
 
 ## 6. Verification status — honest
 
-**Verified in this sandbox:**
-- `python -m py_compile` over all backend sources; `python -m unittest`
-  green for `tests/test_masking.py` (11 tests, stdlib-only).
-- `node --check` on plain-JS web files; all JSON (schemas, manifests,
-  configs) parsed; all touched Android XML parsed; no duplicate string
-  resources; every new `R.string` resolves; `git diff --check` clean.
+**Verified in this sandbox (real runs, no mocks):**
+- Backend E2E **16/16 green** against real PostgreSQL (boot → provision →
+  telemetry/errors ingest + history + auth denials → heartbeat → masking
+  (same-faction full / cross-faction masked / INF-command full) → 6 sectors →
+  WS fan-out → WS 4401 on bad token).
+- `python -m unittest` green for `tests/test_masking.py` (11 tests).
+- Web: `tsc --noEmit` clean, `next lint` clean, `next build` green,
+  production `next start` boot + `curl /` and `/map` → HTTP 200.
+- Android Java: every file under `AIMSICD/src` parses with **0 tree-sitter
+  errors** (this sweep caught and fixed two real corruptions in
+  `CellTracker.java`); all touched XML parsed; no duplicate string resources;
+  every new `R.string` resolves; `git diff --check` clean.
 
-**NOT verifiable here (no Android SDK/Gradle, no npm/PyPI egress):**
-- `./gradlew assembleDebug`, `pip install + uvicorn` boot, `npm install +
-  next build + next lint`, on-device uplink flow, live WS/Mongo paths.
-- Run those in CI / on hardware before calling Phase 2 done.
+**NOT verifiable here (no Android SDK/Gradle; legacy deps on dead jcenter):**
+- `./gradlew assembleDebug` and the on-device uplink flow — needs CI/hardware.
+- Live Keycloak RS256 path (HS256 covered) and multi-replica WS fan-out.
 
 ## 7. Follow-ups (out of this slice)
 

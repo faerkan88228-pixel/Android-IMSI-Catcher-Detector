@@ -91,3 +91,10 @@ class HealthResponse(BaseModel):
     status: str
     database: str
     claims: Dict[str, str] = {}
+
+
+def dump(model):
+    """Version-agnostic model → dict (pydantic v2 .model_dump / v1 .dict)."""
+    if hasattr(model, "model_dump"):
+        return model.model_dump()
+    return model.dict()

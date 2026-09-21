@@ -1,6 +1,8 @@
 """Prometheus Project: Infinity — FastAPI application factory."""
 
-from fastapi import Depends, FastAPI, WebSocket, WebSocketDisconnect
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -24,11 +26,19 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
 def create_app():
     validate()
+
+    @asynccontextmanager
+    async def lifespan(app):
+        db.init_pool()
+        yield
+        db.close_pool()
+
     app = FastAPI(
         title="Prometheus Project: Infinity API",
         version="2.0.0",
         docs_url="/docs",
         redoc_url=None,
+        lifespan=lifespan,
     )
     app.add_middleware(SecurityHeadersMiddleware)
     if settings.CORS_ORIGINS:
@@ -47,14 +57,6 @@ def create_app():
     app.include_router(map_router.router)
     app.include_router(devices.router)
 
-    @app.on_event("startup")
-    def _startup():
-        db.init_pool()
-
-    @app.on_event("shutdown")
-    def _shutdown():
-        db.close_pool()
-
     @app.get("/", include_in_schema=False)
     async def root():
         return {"service": "prometheus-infinity", "api": "v1"}
@@ -68,12 +70,14 @@ def create_app():
 
     @app.websocket("/v1/stream")
     async def stream(websocket: WebSocket, token: str = ""):
+        # Accept first: closing before accept can only send a plain HTTP
+        # denial, while accept-then-close delivers the 4401 close frame.
+        await websocket.accept()
         try:
             decode_token(token)
         except AuthError:
             await websocket.close(code=4401)
             return
-        await websocket.accept()
         queue = await hub.subscribe()
         try:
             while True:

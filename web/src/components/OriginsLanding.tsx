@@ -9,7 +9,12 @@ function useAmbient() {
   const ctxRef = useRef<AudioContext | null>(null);
   const [playing, setPlaying] = useState(false);
 
-  useEffect(() => () => ctxRef.current?.close().catch(() => undefined), []);
+  useEffect(
+    () => () => {
+      ctxRef.current?.close().catch(() => undefined);
+    },
+    []
+  );
 
   function toggle() {
     if (playing) {
