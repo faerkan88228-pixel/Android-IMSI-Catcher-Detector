@@ -35,6 +35,8 @@ import com.secupwn.aimsicd.defender.DefenderAgent;
 import com.secupwn.aimsicd.enums.Status;
 import com.secupwn.aimsicd.protection.ApnGuard;
 import com.secupwn.aimsicd.protection.AutoProtector;
+import com.secupwn.aimsicd.prometheus.NeuralErrorLogger;
+import com.secupwn.aimsicd.prometheus.PrometheusUplink;
 import com.secupwn.aimsicd.ui.activities.MainActivity;
 import com.secupwn.aimsicd.utils.Cell;
 import com.secupwn.aimsicd.utils.Device;
@@ -141,6 +143,12 @@ public class CellTracker implements SharedPreferences.OnSharedPreferenceChangeLi
     private boolean apnAutoBind = true;
     private boolean apnAutoAdapt;
     private String apnExpected = "";
+
+    // Prometheus uplink: this node streams to the Infinity backend.
+    private PrometheusUplink mPrometheusUplink;
+    private boolean prometheusEnabled;
+    private String prometheusEndpoint = "";
+    private String prometheusToken = "";
     private LinkedBlockingQueue<NeighboringCellInfo> neighboringCellBlockingQueue;
     private long lastDefenderFeedMs;
 
@@ -194,6 +202,9 @@ public class CellTracker implements SharedPreferences.OnSharedPreferenceChangeLi
         mSimSwapper = new SimSwapper(context, this, dbHelper);
         mApnGuard = new ApnGuard(context, this, dbHelper);
         applyApnGuardConfig();
+        mPrometheusUplink = new PrometheusUplink(context);
+        applyPrometheusConfig();
+        NeuralErrorLogger.install(context, mPrometheusUplink);
 
         // loadPreferences() above may already have enabled tracking (its default is ON); in that
         // case the protection subsystem must be started now — it would otherwise only start on
@@ -418,6 +429,15 @@ public class CellTracker implements SharedPreferences.OnSharedPreferenceChangeLi
             apnExpected = sharedPreferences.getString(key, "");
             applyApnGuardConfig();
             recheckApn();
+        } else if (key.equals(context.getString(R.string.pref_prometheus_enable_key))) {
+            prometheusEnabled = sharedPreferences.getBoolean(key, false);
+            applyPrometheusConfig();
+        } else if (key.equals(context.getString(R.string.pref_prometheus_endpoint_key))) {
+            prometheusEndpoint = sharedPreferences.getString(key, "");
+            applyPrometheusConfig();
+        } else if (key.equals(context.getString(R.string.pref_prometheus_token_key))) {
+            prometheusToken = sharedPreferences.getString(key, "");
+            applyPrometheusConfig();
         }
     }
 
@@ -760,6 +780,15 @@ public class CellTracker implements SharedPreferences.OnSharedPreferenceChangeLi
         this.apnExpected = prefs.getString(context.getString(R.string.pref_apn_expected_key), "");
         if (this.apnExpected == null) {
             this.apnExpected = "";
+        }
+        this.prometheusEnabled = prefs.getBoolean(context.getString(R.string.pref_prometheus_enable_key), false);
+        this.prometheusEndpoint = prefs.getString(context.getString(R.string.pref_prometheus_endpoint_key), "");
+        this.prometheusToken = prefs.getString(context.getString(R.string.pref_prometheus_token_key), "");
+        if (this.prometheusEndpoint == null) {
+            this.prometheusEndpoint = "";
+        }
+        if (this.prometheusToken == null) {
+            this.prometheusToken = "";
         }
 
         // Default to Automatic ("1")
@@ -1353,6 +1382,32 @@ public class CellTracker implements SharedPreferences.OnSharedPreferenceChangeLi
                 break;
         }
         setNotification();
+        reportToPrometheus(threatLevel, eventId);
+    }
+
+    /**
+     * Streams the protection event to the Prometheus backend (no-op unless the
+     * uplink is enabled and configured in Settings -> Prometheus Uplink).
+     */
+    private void reportToPrometheus(Status threatLevel, int eventId) {
+        if (mPrometheusUplink == null || threatLevel == null) {
+            return;
+        }
+        // The wire contract has no SKULL level; escalate it as DANGER.
+        String level = threatLevel == Status.SKULL ? Status.DANGER.name() : threatLevel.name();
+        mPrometheusUplink.reportTelemetry(eventId, level, protectionNotificationText, null);
+    }
+
+    /**
+     * Pushes the currently loaded uplink preferences into the {@link PrometheusUplink}.
+     */
+    private void applyPrometheusConfig() {
+        if (mPrometheusUplink == null) {
+            return;
+        }
+        mPrometheusUplink.setEnabled(prometheusEnabled);
+        mPrometheusUplink.setEndpoint(prometheusEndpoint);
+        mPrometheusUplink.setDeviceToken(prometheusToken);
     }
 
     /**

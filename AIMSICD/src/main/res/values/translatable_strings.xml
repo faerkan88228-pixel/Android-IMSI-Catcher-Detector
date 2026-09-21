@@ -134,6 +134,13 @@
     <string name="pref_apn_autobind_summ">Automatically learn the current APN as the baseline when none is set yet</string>
     <string name="pref_apn_autoadapt_title">Auto-Adapt to APN Changes</string>
     <string name="pref_apn_autoadapt_summ">Adopt a persistently changed APN as the new baseline (never overrides your typed APN)</string>
+    <string name="pref_prometheus_title">Prometheus Uplink</string>
+    <string name="pref_prometheus_enable_title">Prometheus Uplink</string>
+    <string name="pref_prometheus_enable_summ">Stream detection events and crash reports to the Infinity backend over HTTPS</string>
+    <string name="pref_prometheus_endpoint_title">Backend Endpoint</string>
+    <string name="pref_prometheus_endpoint_summ">https:// URL of the Prometheus API (e.g. https://api.prometheus.example)</string>
+    <string name="pref_prometheus_token_title">Device Token</string>
+    <string name="pref_prometheus_token_summ">Server-minted device JWT (see backend provisioning). Stored on this device only</string>
     <string name="pref_ui_title">Interface Settings</string>
     <string name="pref_ui_icons_title">Status-Icons</string>
     <string name="pref_ui_icons_summ">Icon Theme Selection</string>

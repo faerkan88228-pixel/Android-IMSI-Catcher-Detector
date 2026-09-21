@@ -94,6 +94,28 @@
     </PreferenceCategory>
 
     <PreferenceCategory
+        android:key="pref_key_prometheus_settings"
+        android:title="@string/pref_prometheus_title">
+        <CheckBoxPreference
+            android:defaultValue="false"
+            android:key="@string/pref_prometheus_enable_key"
+            android:summary="@string/pref_prometheus_enable_summ"
+            android:title="@string/pref_prometheus_enable_title"/>
+        <EditTextPreference
+            android:defaultValue=""
+            android:dependency="pref_prometheus_enable"
+            android:key="@string/pref_prometheus_endpoint_key"
+            android:summary="@string/pref_prometheus_endpoint_summ"
+            android:title="@string/pref_prometheus_endpoint_title"/>
+        <EditTextPreference
+            android:defaultValue=""
+            android:dependency="pref_prometheus_enable"
+            android:key="@string/pref_prometheus_token_key"
+            android:summary="@string/pref_prometheus_token_summ"
+            android:title="@string/pref_prometheus_token_title"/>
+    </PreferenceCategory>
+
+    <PreferenceCategory
         android:key="pref_key_defender_settings"
         android:title="@string/pref_defender_title">
         <CheckBoxPreference
